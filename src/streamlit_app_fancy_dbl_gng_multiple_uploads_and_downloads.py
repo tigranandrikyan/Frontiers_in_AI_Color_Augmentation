@@ -1,4 +1,3 @@
-
 import streamlit as st
 import numpy as np
 import constants
@@ -12,7 +11,7 @@ import matplotlib.pyplot as plt
 import io, zipfile
 import datetime
 import fancy_pca as FP
-import random
+import time
 
 
 
@@ -27,16 +26,18 @@ COLORJITTER_STR = "Color Jitter"
 MAX_UI_AUG_COUNT = 10
 MAX_UI_AUG_COUNT += 1
 #Basic point cloud size 
-CLOUD_SIZE = 5000
+CLOUD_SIZE = 1000
+#Basic PC1/PC2 size
+PC12_SIZE = 1000
 #Basic point cluster cloud size 
-CLUSTER_CLOUD_SIZE = 5000
+CLUSTER_CLOUD_SIZE = 1000
 #Basic number of datapoints for reduced fancy gng training
-REDUCED_TRAINING = 5000
+REDUCED_TRAINING = 1000
 #Margin in the subplot between the rows and column
 SUB_PLOT_MARGIN = 7
 
 # Plot font / layout
-TITLE_FONT_SIZE = 34
+TITLE_FONT_SIZE = 30
 TICK_LABEL_SIZE = 16
 TITLE_PAD = 16
 
@@ -100,7 +101,7 @@ st.write("Upload one or more images or take one with your camera.")
 
 # Choose augmentation technique
 aug_option = st.selectbox(
-    "Select the augmentation methode:",
+    "Select the augmentation method:",
     [FANCYGNG_STR, FANCYPCA_STR, COLORJITTER_STR],
     index=0,
     help="Select the augmentation method for generating the images."
@@ -167,6 +168,8 @@ show_gray_scale = st.checkbox("Additionally generate a grayscale version",
 show_cluster = False
 reduced_fancy_gng = False
 show_cluster_cloud = False
+use_original_size_pc12 = False
+show_cluster_pc12_ev = False
 
 #Augmentation technique: Fancy gng
 if aug_option == FANCYGNG_STR:
@@ -191,7 +194,6 @@ if aug_option == FANCYGNG_STR:
                         "The result is a 2D visual representation of the color distribution of an image.")   
         option_buttons_ui.append(show_cluster_cloud)
  
-    
 
 show_point_cloud = False
 #Option: Generate image point cloud
@@ -203,6 +205,16 @@ if figures:
                         "The result is a 2D visual representation of the color distribution of an image.")   
     option_buttons_ui.append(show_point_cloud)
 
+#Option: Generate image PC1/PC2
+show_pc12 = False
+if figures:
+    show_pc12 = st.checkbox("Show the PC1/PC2 plot",
+                        help="This option generates a 2D PCA projection of each image's pixels in RGB color space using the principal components of the original image. " \
+                        "Each point represents one pixel and is colored with its original RGB value. " \
+                        "This allows direct comparison of the color distribution of the original and augmented images in the same PCA basis.")
+    option_buttons_ui.append(show_pc12)
+
+option_buttons_ui.append(show_cluster_cloud and show_pc12)
 
 option_buttons_ui.append(show_gray_scale)
 
@@ -222,7 +234,7 @@ st.sidebar.header("⚙️ Parameter settings",
 st.sidebar.subheader("General")
 AUG_COUNT = 5
 #The number of augmentations generated per image
-AUG_COUNT = st.sidebar.number_input("Number of augmentations", min_value=1, max_value=100,  value=getattr(constants, "AUG_COUNT", 3),
+AUG_COUNT = st.sidebar.number_input("Number of augmentations", min_value=0, max_value=100,  value=getattr(constants, "AUG_COUNT", 3),
                                     help="The number of augmentations generated per image")
 
 # Special color jitter parameter 
@@ -230,15 +242,19 @@ if aug_option == COLORJITTER_STR:
     st.sidebar.subheader("🧮 Color Jitter parameter")
     #Varies the image brightness
     BRIGHTNESS = st.sidebar.slider("Brightness", 0.0, 2.0, getattr(constants, "BRIGHTNESS", 0.5),
+                step=0.05,
                 help="Varies the image brightness. Values above 1 make the image brighter, values below 1 make it darker.")
     #Changes the contrast of the image
     CONTRAST = st.sidebar.slider("Contrast", 0.0, 2.0, getattr(constants, "CONTRAST", 0.5),
+                step=0.05,
                 help="Changes the contrast of the image. Higher values increase the difference between light and dark.")
     #Changes the color saturation
     SATURATION = st.sidebar.slider("Saturation", 0.0, 2.0, getattr(constants, "SATURATION", 0.5),
+                step=0.05,   
                 help="Changes the color saturation. Low values desaturate the image, high values intensify the colors.")
     #Shifts the color tone of the image
     HUE = st.sidebar.slider("Hue", 0.0, 0.5, getattr(constants, "HUE", 0.1),
+                step=0.05,
                 help="Shifts the color tone of the image. Small values result in subtle color shifts.")
 
     #Set values 
@@ -252,34 +268,28 @@ if aug_option == COLORJITTER_STR:
 elif aug_option == FANCYGNG_STR:
     st.sidebar.subheader("🧮 Fancy GNG parameter")
     #Determines the strength of the color shift along the PCA components
-    STANDARD_DEVIATION = st.sidebar.slider("Standard deviation", 1.0, 10.0,  float(getattr(constants, "FANCY_PCA_STANDARD_DEVIATION", 2.0)),
-                    step=0.25,
+    STANDARD_DEVIATION = st.sidebar.slider("Standard deviation", 0.0, 10.0,  float(getattr(constants, "FANCY_PCA_STANDARD_DEVIATION", 2.0)),
+                    step=0.05,
                     help="Determines the strength of the color shift along the PCA components. Higher values produce stronger color variations.")
     #Sets the average shift along the color PCA
     MEAN = st.sidebar.slider("Mean", 0.0, 10.0,  float(getattr(constants, "FANCY_PCA_MEAN", 3.0)),
-                    step=0.25,
+                    step=0.05,
                     help="Sets the average shift along the color PCA. Affects how much colors are changed on average.")
-     
-    #USE_SMOOTH = st.sidebar.checkbox("Use smoothing", value=False)
-    #if USE_SMOOTH:
-    #    SIGMA = st.sidebar.slider("Smoothing/Sigma", 0, 10, getattr(constants, "SIGMA", 3))
-    #    constants.SIGMA = SIGMA
     
     #Set values 
     constants.FANCY_PCA_STANDARD_DEVIATION = STANDARD_DEVIATION
     constants.FANCY_PCA_MEAN = MEAN
-    #constants.USE_SMOOTH = USE_SMOOTH
     
 # Special fancy pca parameter 
 elif aug_option == FANCYPCA_STR:
     st.sidebar.subheader("🧮 Fancy PCA parameter")
     #Determines the strength of the color shift along the PCA components
     STANDARD_DEVIATION = st.sidebar.slider("Standard deviation", 0.0, 10.0,  float(getattr(constants, "FANCY_PCA_STANDARD_DEVIATION", 2.0)),
-                        step=0.25,
+                        step=0.05,
                         help="Determines the strength of the color shift along the PCA components. Higher values produce stronger color variations.")
     #Sets the average shift along the color PCA
     MEAN = st.sidebar.slider("Mean", 0.0, 10.0,  float(getattr(constants, "FANCY_PCA_MEAN", 3.0)),
-                        step=0.25,
+                        step=0.05,
                         help="Sets the average shift along the color PCA. Affects how much colors are changed on average.")  
     
     #Set values 
@@ -298,6 +308,19 @@ if show_point_cloud:
     #By default the point cloud uses 5000 random data points in order to safe computational power. This option allows to use the whole image to generate the point cloud
     use_original_size = st.sidebar.checkbox("Use original image size",
                 help="Use all pixels of the image to generate the point cloud. This may take some time for larger images.")
+
+# Special PC1/PC2 parameter
+if show_pc12:
+    st.sidebar.subheader("📉 Size of the PC1/PC2 plot")
+    #Size of PC1/PC2 plot
+    PC12_SIZE = st.sidebar.number_input("Number of points", 100, 1000000, PC12_SIZE,
+                help="By default, 5000 random pixels from the image are selected for displaying the PC1/PC2 plot. " \
+                "This helps to generate the PC1/PC2 visualization faster and save computing power. " \
+                "However, any other number smaller than the total number of pixels can also be selected. ")
+
+    #By default the PC1/PC2 plot uses 5000 random data points in order to safe computational power. This option allows to use the whole image to generate the PC1/PC2 plot
+    use_original_size_pc12 = st.sidebar.checkbox("Use original image size",
+                help="Use all pixels of the image to generate the PC1/PC2 plot. This may take some time for larger images.")
 
 # Special cluster cloud parameter   
 if show_cluster_cloud:
@@ -320,7 +343,6 @@ if reduced_fancy_gng and aug_option == FANCYGNG_STR:
                 help="By default, the reduced GNG training uses 5000 random pixels from the image. " \
                 "This helps to train GNG faster and save computing power. " \
                 "However, any other number that is smaller than the total number of pixels can also be selected. ")
-    
 
 constants.AUG_COUNT = AUG_COUNT
 
@@ -497,18 +519,57 @@ def show_color_jitter_info(filename, info):
     st.write(f"**Image size:** {info['original'].size}")
     st.write(f"**Image array shape:** {info['data_shape']}")
     st.write(f"**Parameter:** {info['parameter']}")
-
-
-
-
-
 #-----------------------------Plotting----------------------------------------------
+
+#Compute shared point cloud data for normal point cloud and cluster cloud
+def get_point_cloud_plot_data(all_images, cloud_size, use_original_cloud):
+    images = all_images if len(all_images) < MAX_UI_AUG_COUNT else all_images[:MAX_UI_AUG_COUNT]
+    current_info = globals().get("info", {})
+    cluster_source = current_info["pixel_cluster_map"] if "pixel_cluster_map" in current_info else None
+    cluster_map = np.asarray(cluster_source) if cluster_source is not None else None
+    cache_key = (
+        tuple((id(img), img.size) for img in images),
+        int(cloud_size),
+        bool(use_original_cloud),
+        id(cluster_source) if cluster_source is not None else None
+    )
+    cache = getattr(get_point_cloud_plot_data, "_cache", {})
+
+    if cache_key in cache:
+        return cache[cache_key]
+
+    point_cloud_plot_data = []
+
+    for img in images:
+        rgb_image = img.convert("RGB")
+        points = np.asarray(rgb_image).reshape(-1, 3)
+        cluster_values = cluster_map if cluster_map is not None and len(cluster_map) == len(points) else None
+
+        #Randomly select points (or all of them, if fewer)
+        if len(points) > cloud_size and not use_original_cloud:
+            indices = np.random.choice(len(points), cloud_size, replace=False)
+            points = points[indices]
+            if cluster_values is not None:
+                cluster_values = cluster_values[indices]
+
+        point_cloud_plot_data.append({
+            "points": points,
+            "cluster_values": cluster_values
+        })
+
+    cache[cache_key] = point_cloud_plot_data
+    get_point_cloud_plot_data._cache = cache
+
+    return point_cloud_plot_data
+
 
 #Create point cloud figure 
 #Parameter: all_images -> Array of original image & augmentated images, axs -> fig axes , row_idx -> figure row of visualization
 def create_point_cloud(all_images, axs, row_idx = 0):
     #Cap the figure images
     images = all_images if len(all_images) < MAX_UI_AUG_COUNT else all_images[:MAX_UI_AUG_COUNT]
+    point_cloud_plot_data = get_point_cloud_plot_data(all_images, CLOUD_SIZE, use_original_size)
+
     for idx, img in enumerate(images):
         #get current axis
         ax = get_fig_ax(axs, row_idx, idx)
@@ -518,25 +579,10 @@ def create_point_cloud(all_images, axs, row_idx = 0):
         
         # use only at empty axes
         if len(ax.images) == 0 and len(ax.collections) == 0: 
-            rgb_image = img.convert("RGB")
-            width, height = img.size
-            
-            #Create point array
-            points = np.array([
-                 (r, g, b)
-                 for x in range(width)
-                 for y in range(height)
-                 for (r, g, b) in [rgb_image.getpixel((x, y))]
-             ])
-
-            #Randomly select 5000 points (or all of them, if fewer) 
-            if len(points) > CLOUD_SIZE and not use_original_size:
-                #print("Capped point cloud")
-                indices = np.random.choice(len(points), CLOUD_SIZE, replace=False)
-                points = points[indices]
+            points = point_cloud_plot_data[idx]["points"]
 
             # Define points (r,g,b -> as color)
-            ax.scatter(points[:, 1], points[:, 2], c=points[:, 0:3] / 255, s=3)
+            ax.scatter(points[:, 1], points[:, 2], c=points[:, 0:3] / 255, s=3, alpha=1.0)
             #Set axis parameters
             ax.set_xlim(0, 255)
             ax.set_ylim(0, 255)
@@ -544,7 +590,166 @@ def create_point_cloud(all_images, axs, row_idx = 0):
             ax.set_yticks(range(0, 256, 100)) 
             ax.set_aspect('equal', adjustable='box')
             ax.set_box_aspect(1)
-            ax.set_title("Point Cloud" if idx == 0 else f"Point Cloud {idx}", fontsize=TITLE_FONT_SIZE, pad=PLOT_TITLE_PAD, y=PLOT_TITLE_Y)
+            ax.set_title("Point Cloud (GB)" if idx == 0 else f"Point Cloud (GB) {idx}", fontsize=TITLE_FONT_SIZE, pad=PLOT_TITLE_PAD, y=PLOT_TITLE_Y)
+
+#Compute PC1/PC2 basis from the original image
+#Parameter: image -> original image
+def compute_pc12_basis_from_original(image):
+    rgb_image = image.convert("RGB")
+    points = np.asarray(rgb_image).reshape(-1, 3).astype(np.float32) / constants.MAX_COLOR_VALUE
+
+    mean_vec = np.mean(points, axis=0)
+    mean_free_data = points - mean_vec
+    data_covarianz = np.cov(mean_free_data, rowvar=False)
+    eig_values, eig_vecs = np.linalg.eigh(data_covarianz)
+
+    # sort descending -> PC1, PC2
+    order = np.argsort(eig_values)[::-1]
+    eig_vecs = eig_vecs[:, order]
+    pc_basis = eig_vecs[:, :2]
+
+    return mean_vec, pc_basis
+
+
+#Compute shared PC1/PC2 projection data for normal PC1/PC2 and cluster PC1/PC2
+def get_pc12_plot_data(all_images):
+    images = all_images if len(all_images) < MAX_UI_AUG_COUNT else all_images[:MAX_UI_AUG_COUNT]
+    current_info = globals().get("info", {})
+    cluster_source = current_info["pixel_cluster_map"] if "pixel_cluster_map" in current_info else None
+    cluster_map = np.asarray(cluster_source) if cluster_source is not None else None
+    cache_key = (
+        tuple((id(img), img.size) for img in images),
+        int(PC12_SIZE),
+        bool(use_original_size_pc12),
+        id(cluster_source) if cluster_source is not None else None
+    )
+    cache = getattr(get_pc12_plot_data, "_cache", {})
+
+    if cache_key in cache:
+        return cache[cache_key]
+
+    if len(images) == 0:
+        return {
+            "projected_results": [],
+            "global_x_min": None,
+            "global_x_max": None,
+            "global_y_min": None,
+            "global_y_max": None,
+            "x_pad": None,
+            "y_pad": None,
+            "error": None
+        }
+
+    try:
+        # Use PCA basis only from the original image
+        original_mean, pc_basis = compute_pc12_basis_from_original(images[0])
+
+        projected_results = []
+        global_x_min, global_x_max = np.inf, -np.inf
+        global_y_min, global_y_max = np.inf, -np.inf
+
+        # Project original + all augmentations into the SAME PCA basis
+        for img in images:
+            rgb_image = img.convert("RGB")
+            points = np.asarray(rgb_image).reshape(-1, 3).astype(np.float32) / constants.MAX_COLOR_VALUE
+            cluster_values = cluster_map if cluster_map is not None and len(cluster_map) == len(points) else None
+
+            if len(points) > PC12_SIZE and not use_original_size_pc12:
+                indices = np.random.choice(len(points), PC12_SIZE, replace=False)
+                plot_points = points[indices]
+                if cluster_values is not None:
+                    cluster_values = cluster_values[indices]
+            else:
+                plot_points = points
+
+            projected = np.dot(plot_points - original_mean, pc_basis)
+
+            projected_results.append({
+                "plot_points": plot_points,
+                "cluster_values": cluster_values,
+                "projected": projected
+            })
+
+            global_x_min = min(global_x_min, np.min(projected[:, 0]))
+            global_x_max = max(global_x_max, np.max(projected[:, 0]))
+            global_y_min = min(global_y_min, np.min(projected[:, 1]))
+            global_y_max = max(global_y_max, np.max(projected[:, 1]))
+
+        # Small padding so points do not touch the border
+        x_pad = 0.05 * (global_x_max - global_x_min) if global_x_max > global_x_min else 0.01
+        y_pad = 0.05 * (global_y_max - global_y_min) if global_y_max > global_y_min else 0.01
+
+        pc12_plot_data = {
+            "projected_results": projected_results,
+            "global_x_min": global_x_min,
+            "global_x_max": global_x_max,
+            "global_y_min": global_y_min,
+            "global_y_max": global_y_max,
+            "x_pad": x_pad,
+            "y_pad": y_pad,
+            "error": None
+        }
+
+    except Exception as e:
+        pc12_plot_data = {
+            "projected_results": [],
+            "global_x_min": None,
+            "global_x_max": None,
+            "global_y_min": None,
+            "global_y_max": None,
+            "x_pad": None,
+            "y_pad": None,
+            "error": e
+        }
+
+    cache[cache_key] = pc12_plot_data
+    get_pc12_plot_data._cache = cache
+
+    return pc12_plot_data
+
+
+#Create PC1/PC2 figure 
+#Parameter: all_images -> Array of original image & augmentated images, axs -> fig axes , row_idx -> figure row of visualization
+def create_pc12_plot(all_images, axs, row_idx = 0):
+    #Cap the figure images
+    images = all_images if len(all_images) < MAX_UI_AUG_COUNT else all_images[:MAX_UI_AUG_COUNT]
+
+    if len(images) == 0:
+        return
+
+    pc12_plot_data = get_pc12_plot_data(all_images)
+
+    if pc12_plot_data["error"] is not None:
+        for idx, _ in enumerate(images):
+            ax = get_fig_ax(axs, row_idx, idx)
+            ax.axis("off")
+            ax.text(0.5, 0.5, f"PC1/PC2 error:\n{pc12_plot_data['error']}", ha="center", va="center", fontsize=12)
+        return
+
+    for idx, data in enumerate(pc12_plot_data["projected_results"]):
+        #get current axis
+        ax = get_fig_ax(axs, row_idx, idx)
+
+        #ui parameter of axis
+        ax.tick_params(width=3, labelsize=TICK_LABEL_SIZE)
+
+        # use only at empty axes
+        if len(ax.images) == 0 and len(ax.collections) == 0:
+            plot_points = data["plot_points"]
+            plot_scale = constants.MAX_COLOR_VALUE
+            projected = data["projected"] * plot_scale
+            pc_axis_min = (pc12_plot_data["global_x_min"] - pc12_plot_data["x_pad"]) * plot_scale
+            pc_axis_max = (pc12_plot_data["global_x_max"] + pc12_plot_data["x_pad"]) * plot_scale
+            pc_y_axis_min = (pc12_plot_data["global_y_min"] - pc12_plot_data["y_pad"]) * plot_scale
+            pc_y_axis_max = (pc12_plot_data["global_y_max"] + pc12_plot_data["y_pad"]) * plot_scale
+            ax.scatter(projected[:, 0], projected[:, 1], c=plot_points, s=3, alpha=1.0)
+            ax.set_xlim(pc_axis_min, pc_axis_max)
+            ax.set_ylim(pc_y_axis_min, pc_y_axis_max)
+            ax.set_aspect('auto')
+            ax.set_box_aspect(1)
+            ax.set_xlim(pc_axis_min, pc_axis_max)
+            ax.set_ylim(pc_y_axis_min, pc_y_axis_max)
+            ax.set_title("PC1/PC2" if idx == 0 else f"PC1/PC2 {idx}", fontsize=TITLE_FONT_SIZE, pad=PLOT_TITLE_PAD, y=PLOT_TITLE_Y)
 
 
 #Create point cluster figure 
@@ -552,7 +757,10 @@ def create_point_cloud(all_images, axs, row_idx = 0):
 def create_cluster_cloud(all_images, axs, row_idx = 0):
     #Cap the figure images
     images = all_images if len(all_images) < MAX_UI_AUG_COUNT else all_images[:MAX_UI_AUG_COUNT]
-    cluster = info['pixel_cluster_map']
+    cloud_size = CLOUD_SIZE if show_point_cloud else CLUSTER_CLOUD_SIZE
+    use_original_cloud = use_original_size if show_point_cloud else use_original_size_cluster
+    point_cloud_plot_data = get_point_cloud_plot_data(all_images, cloud_size, use_original_cloud)
+
     for idx, img in enumerate(images):
         #get current axis
         ax = get_fig_ax(axs, row_idx, idx)
@@ -561,32 +769,21 @@ def create_cluster_cloud(all_images, axs, row_idx = 0):
         
         # only at empty axes
         if len(ax.images) == 0 and len(ax.collections) == 0:  
-            rgb_image = img.convert("RGB")
-            width, height = img.size
-            
-            #Create (g,b) point array
-            points = np.empty((width * height, 2), dtype=np.uint8)
-            k = 0
-            for y in range(height):
-                for x in range(width):
-                    _, g, b = rgb_image.getpixel((x, y))
-                    points[k] = (g, b)
-                    k += 1
+            data = point_cloud_plot_data[idx]
+            points = data["points"]
+            cluster_values = data["cluster_values"]
             
             #color points in cluster color
-            colors = np.array(
-                [constants.get_color(int(c)) for c in cluster],dtype=np.float32
-            ) / 255.0
-
-            #Randomly select 5000 points (or all of them, if fewer) 
-            if len(points) > CLUSTER_CLOUD_SIZE and not use_original_size_cluster:
-                #print("Capped point cloud")
-                indices = np.random.choice(len(points), CLUSTER_CLOUD_SIZE, replace=False)
-                points = points[indices]
-                colors = colors[indices]
+            if cluster_values is not None:
+                colors = np.array(
+                    [constants.get_color(int(c)) for c in cluster_values],dtype=np.float32
+                ) / 255.0
+            else:
+                ax.axis("off")
+                continue
 
             # Define points (r,g,b -> as color)
-            ax.scatter(points[:, 0], points[:, 1], c=colors, s=3)
+            ax.scatter(points[:, 1], points[:, 2], c=colors, s=3, alpha=1.0)
             #Set axis parameters
             ax.set_xlim(0, 255)
             ax.set_ylim(0, 255)
@@ -595,6 +792,135 @@ def create_cluster_cloud(all_images, axs, row_idx = 0):
             ax.set_aspect('equal', adjustable='box')
             ax.set_box_aspect(1)
             ax.set_title("Cluster Cloud" if idx == 0 else f"Cluster Cloud {idx}", fontsize=TITLE_FONT_SIZE, pad=PLOT_TITLE_PAD, y=PLOT_TITLE_Y)
+
+
+#Create cluster PC1/PC2 figure
+#Parameter: all_images -> Array of original image & augmentated images, axs -> fig axes , row_idx -> figure row of visualization
+def create_cluster_pc12_plot(all_images, axs, row_idx = 0):
+    #Cap the figure images
+    images = all_images if len(all_images) < MAX_UI_AUG_COUNT else all_images[:MAX_UI_AUG_COUNT]
+
+    if len(images) == 0:
+        return
+
+    pc12_plot_data = get_pc12_plot_data(all_images)
+
+    if pc12_plot_data["error"] is not None:
+        for idx, _ in enumerate(images):
+            ax = get_fig_ax(axs, row_idx, idx)
+            ax.axis("off")
+            ax.text(0.5, 0.5, f"Cluster PC1/PC2 error:\n{pc12_plot_data['error']}", ha="center", va="center", fontsize=12)
+        return
+
+    for idx, data in enumerate(pc12_plot_data["projected_results"]):
+        #get current axis
+        ax = get_fig_ax(axs, row_idx, idx)
+
+        #ui parameter of axis
+        ax.tick_params(width=3, labelsize=TICK_LABEL_SIZE)
+
+        # use only at empty axes
+        if len(ax.images) == 0 and len(ax.collections) == 0:
+            cluster_values = data["cluster_values"]
+            if cluster_values is not None:
+                plot_colors = np.array(
+                    [constants.get_color(int(c)) for c in cluster_values], dtype=np.float32
+                ) / 255.0
+            else:
+                ax.axis("off")
+                continue
+
+            plot_scale = constants.MAX_COLOR_VALUE
+            projected = data["projected"] * plot_scale
+            pc_axis_min = (pc12_plot_data["global_x_min"] - pc12_plot_data["x_pad"]) * plot_scale
+            pc_axis_max = (pc12_plot_data["global_x_max"] + pc12_plot_data["x_pad"]) * plot_scale
+            pc_y_axis_min = (pc12_plot_data["global_y_min"] - pc12_plot_data["y_pad"]) * plot_scale
+            pc_y_axis_max = (pc12_plot_data["global_y_max"] + pc12_plot_data["y_pad"]) * plot_scale
+            ax.scatter(projected[:, 0], projected[:, 1], c=plot_colors, s=3, alpha=1.0)
+            ax.set_xlim(pc_axis_min, pc_axis_max)
+            ax.set_ylim(pc_y_axis_min, pc_y_axis_max)
+            ax.set_aspect('auto')
+            ax.set_box_aspect(1)
+            ax.set_xlim(pc_axis_min, pc_axis_max)
+            ax.set_ylim(pc_y_axis_min, pc_y_axis_max)
+            ax.set_title("Cluster PC1/PC2" if idx == 0 else f"Cluster PC1/PC2 {idx}", fontsize=TITLE_FONT_SIZE, pad=PLOT_TITLE_PAD, y=PLOT_TITLE_Y)
+
+
+#Create cluster PC1/PC2 EV figure
+#Parameter: all_images -> Array of original image & augmentated images, axs -> fig axes , row_idx -> figure row of visualization
+def create_cluster_pc12_eigenvectors_plot(all_images, axs, row_idx = 0):
+    #Cap the figure images
+    images = all_images if len(all_images) < MAX_UI_AUG_COUNT else all_images[:MAX_UI_AUG_COUNT]
+
+    if len(images) == 0:
+        return
+
+    pc12_plot_data = get_pc12_plot_data(all_images)
+
+    if pc12_plot_data["error"] is not None:
+        for idx, _ in enumerate(images):
+            ax = get_fig_ax(axs, row_idx, idx)
+            ax.axis("off")
+            ax.text(0.5, 0.5, f"Cluster PC1/PC2 EV error:\n{pc12_plot_data['error']}", ha="center", va="center", fontsize=12)
+        return
+
+    for idx, data in enumerate(pc12_plot_data["projected_results"]):
+        #get current axis
+        ax = get_fig_ax(axs, row_idx, idx)
+
+        #ui parameter of axis
+        ax.tick_params(width=3, labelsize=TICK_LABEL_SIZE)
+
+        # use only at empty axes
+        if len(ax.images) == 0 and len(ax.collections) == 0:
+            cluster_values = data["cluster_values"]
+            if cluster_values is not None:
+                plot_colors = np.array(
+                    [constants.get_color(int(c)) for c in cluster_values], dtype=np.float32
+                ) / 255.0
+            else:
+                ax.axis("off")
+                continue
+
+            projected = data["projected"]
+            ax.scatter(projected[:, 0], projected[:, 1], c=plot_colors, s=3, alpha=1.0)
+            
+            # Additional EV logic
+            unique_clusters = np.unique(cluster_values)
+            for c_id in unique_clusters:
+                c_mask = (cluster_values == c_id)
+                c_points = projected[c_mask]
+                
+                if len(c_points) > 1:
+                    mean = np.mean(c_points, axis=0)
+                    cov = np.cov(c_points, rowvar=False)
+                    
+                    try:
+                        eigvals, eigvecs = np.linalg.eigh(cov)
+                        
+                        # Sort eigenvectors by eigenvalues in descending order
+                        order = np.argsort(eigvals)[::-1]
+                        eigvals = eigvals[order]
+                        eigvecs = eigvecs[:, order]
+                        
+                        for i in range(2):
+                            # Ensure we don't sqrt negative values from numerical imprecision
+                            if eigvals[i] > 0:
+                                ev_scale = np.sqrt(eigvals[i]) * 1.0
+                                
+                                # Plot quiver originating from mean
+                                ax.quiver(mean[0], mean[1], 
+                                          eigvecs[0, i] * ev_scale, eigvecs[1, i] * ev_scale, 
+                                          angles='xy', scale_units='xy', scale=1, 
+                                          color='black', width=0.007, zorder=3)
+                    except np.linalg.LinAlgError:
+                        pass # Ignore if decomposition fails for degenerate clusters
+
+            ax.set_xlim(pc12_plot_data["global_x_min"] - pc12_plot_data["x_pad"], pc12_plot_data["global_x_max"] + pc12_plot_data["x_pad"])
+            ax.set_ylim(pc12_plot_data["global_x_min"] - pc12_plot_data["x_pad"], pc12_plot_data["global_x_max"] + pc12_plot_data["x_pad"])
+            ax.set_aspect('auto')
+            ax.set_box_aspect(1)
+            ax.set_title("Cluster PC1/PC2 EV" if idx == 0 else f"Cluster PC1/PC2 EV {idx}", fontsize=TITLE_FONT_SIZE, pad=PLOT_TITLE_PAD, y=PLOT_TITLE_Y)
 
 
 #Create gray image figure 
@@ -615,21 +941,21 @@ def create_gray_images(all_images, axs, row_idx = 0):
             #create gray scale image
             gray = grayscale_transform(img)
             if idx != 0:
-                #save gray sacle image in session
+                #save gray scale image in session
                 st.session_state.gray_images[filename]["images"].append(gray)
             if figures:
                 #show image 
+                ax.imshow(gray, cmap="gray")
+                ax.axis("off")
                 ax.set_box_aspect(1)
                 ax.set_anchor('N')
                 ax.set_title("Grayscale" if idx == 0 else f"Grayscale {idx}", fontsize=TITLE_FONT_SIZE, pad=IMAGE_TITLE_PAD, y=IMAGE_TITLE_Y)
-                ax.imshow(gray, cmap="gray")
-                ax.axis("off")
 
     #Generate the remaining gray images (which ar not shown in the figure)
     if len(all_images) > MAX_UI_AUG_COUNT:
         for img in all_images[MAX_UI_AUG_COUNT:]:
             gray = grayscale_transform(img)
-            #save gray sacle image in session
+            #save gray scale image in session
             st.session_state.gray_images[filename]["images"].append(gray)
 
 
@@ -660,16 +986,16 @@ def create_cluster_image(all_images, cluster_ax):
                 tmp_width = 0
                 tmp_height += 1
 
-        cluster_ax.set_box_aspect(1)
-        cluster_ax.set_anchor('C')
-        cluster_ax.set_title("Cluster Map", fontsize=TITLE_FONT_SIZE, pad=IMAGE_TITLE_PAD, y=IMAGE_TITLE_Y)
         #show final image
         cluster_ax.imshow(image)
         cluster_ax.axis("off")
+        cluster_ax.set_box_aspect(1)
+        cluster_ax.set_anchor('N')
+        cluster_ax.set_title("Cluster Map", fontsize=TITLE_FONT_SIZE, pad=IMAGE_TITLE_PAD, y=IMAGE_TITLE_Y)
 
 
 #Create original image & augmentation images figure 
-#Parameter: all_images -> Array of original image & augmentated images, axs -> fig axes , row_idx -> figure row of visualization
+#Parameter: all_images -> Array of original image & augmentated images, axs -> fig axes, row_idx -> figure row of visualization
 def create_main_plot(all_images, axs, row_idx = 0):
 
     #Cap the figure images
@@ -733,17 +1059,17 @@ def get_fig_ax(axs, row_index, idx):
 
 #Start check for augmentation
 if (start_augmentation or st.session_state.done) and st.session_state.uploaded_files:
-    #itterate over each uploaded image
+    #iterate over each uploaded image
     for uploaded_file in st.session_state.uploaded_files:
         #save file name
         filename = uploaded_file.name
-
         # If already calculated, skip computation
         if filename not in st.session_state.image_results and start_augmentation:
             #save augmentation technique in session
             st.session_state.last_aug = aug_option
             with st.spinner(f"Process {filename} ..."):
                 image = Image.open(uploaded_file).convert("RGB")
+                
                 
                 # Resize image if it exceeds 640 width or 480 height
                 if image.width > 640 or image.height > 480:
@@ -764,11 +1090,12 @@ if (start_augmentation or st.session_state.done) and st.session_state.uploaded_f
                 #call color jitter
                 elif aug_option == COLORJITTER_STR:
                     color_jitter(data_array, image)
+                
 
                 
                 
     
-        # Get augmentation session data struct
+        # Get augmentation session data structure
         info = st.session_state.image_results[filename]
 
         #save augmentation debug info 
@@ -782,6 +1109,7 @@ if (start_augmentation or st.session_state.done) and st.session_state.uploaded_f
 
                 elif aug_option == COLORJITTER_STR:
                     st.session_state.last_aug_info = show_color_jitter_info
+                
             
             #show augmentation debug info 
             st.session_state.last_aug_info(filename, info)
@@ -791,8 +1119,9 @@ if (start_augmentation or st.session_state.done) and st.session_state.uploaded_f
         with st.spinner(f"Augmentation of {filename} completed ... Start visualization"):
             #If no figure is created yet
             if filename not in st.session_state.fig_png:
+                start_time = time.time()
                 #get current image
-                image = Image.open(uploaded_file).convert("RGB")
+                image = info["original"]
                 #get figure rows 
                 rows = sum(1 for opt in option_buttons_ui if opt and opt) + 1
                 #get figure columns
@@ -805,18 +1134,17 @@ if (start_augmentation or st.session_state.done) and st.session_state.uploaded_f
                 axs = np.empty((rows, cols), dtype=object)
 
                 #Create special side column for cluster image
+                extra_cluster_axes = []
                 if show_cluster and figures:
-                    #only one row
-                    if rows == 1:
-                        #add special column
-                        gs = fig.add_gridspec(rows, cols + 1, width_ratios=[1]*cols + [1])
-                    #more than one row
-                    else:
-                        gs = fig.add_gridspec(rows, cols + 1, width_ratios=[1]*cols + [1.5])
-                    cluster_ax = fig.add_subplot(gs[:, -1])
+                    gs = fig.add_gridspec(rows, cols + 1, width_ratios=[1] * (cols + 1))
+                    cluster_ax = fig.add_subplot(gs[0, -1])
+                    for rr in range(1, rows):
+                        empty_ax = fig.add_subplot(gs[rr, -1])
+                        empty_ax.axis("off")
+                        extra_cluster_axes.append(empty_ax)
                 else:
                     gs = fig.add_gridspec(rows, cols)
-                #itterate over each row and column
+                #iterate over each row and column
                 for r in range(rows):
                     for c in range(cols):
                         #add sub plots to axis               
@@ -834,9 +1162,19 @@ if (start_augmentation or st.session_state.done) and st.session_state.uploaded_f
                     create_point_cloud([info["original"]] + info["aug_images"], axs, current_row)
                     current_row += 1
 
+                # Generate figure row with the PC1/PC2 plots
+                if show_pc12 and figures:
+                    create_pc12_plot([info["original"]] + info["aug_images"], axs, current_row)
+                    current_row += 1
+
                 # Generate figure row with the cluster clouds
                 if show_cluster_cloud and figures:
                     create_cluster_cloud([info["original"]] + info["aug_images"], axs, current_row)
+                    current_row += 1
+
+                # Generate figure row with the cluster PC1/PC2 plots
+                if show_cluster_cloud and show_pc12 and figures:
+                    create_cluster_pc12_plot([info["original"]] + info["aug_images"], axs, current_row)
                     current_row += 1
 
                 # Generate figure row with the gray scale images
@@ -852,6 +1190,10 @@ if (start_augmentation or st.session_state.done) and st.session_state.uploaded_f
                     fig.subplots_adjust(wspace=0.35, hspace=0.55)   
                     png_buf = fig_to_png(fig)
                     st.session_state.fig_png[filename] = png_buf.getvalue()
+                    plt.close(fig)
+                    
+                    end_time = time.time()
+                    st.success(f"Visualization generated in {end_time - start_time:.2f} seconds!")
                
                     
             
@@ -872,7 +1214,7 @@ if st.session_state.image_results:
     #create zip buffer
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w") as zipf:
-        #save each augmentated image in zip file
+        #save each augmented image in zip file
         for filename, info in st.session_state.image_results.items():
             base_name = filename.rsplit('.', 1)[0]
             for i, img in enumerate(info["aug_images"]):
@@ -895,7 +1237,7 @@ if st.session_state.image_results and filename in st.session_state.gray_images:
     #create zip buffer
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w") as zipf:
-        #save each augmentated image in zip file
+        #save each augmented image in zip file
         for filename, info in st.session_state.gray_images.items():
             base_name = filename.rsplit('.', 1)[0]
             for i, img in enumerate(info['images']):
@@ -911,5 +1253,3 @@ if st.session_state.image_results and filename in st.session_state.gray_images:
         file_name="gray_scale_images.zip",
         mime="application/zip",
     )
-
-    
